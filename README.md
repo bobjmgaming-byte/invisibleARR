@@ -1,14 +1,12 @@
-# Proxmox / Docker Media Stack: Gluetun VPN & *Arr Automation
+# Proxmox / Docker Media Stack: Gluetun VPN & \*Arr Automation
 
-This repository contains a unified `docker-compose.yml` deployment for a complete, production-ready media automation stack running on Docker / Proxmox VE. 
+This repository contains a unified `docker-compose.yml` deployment for a complete, production-ready media automation stack running on Docker / Proxmox VE.
 
-All torrent download traffic is routed strictly through a **Gluetun WireGuard VPN client container**, while maintaining seamless local communication between services (Radarr, Sonarr, Lidarr, Bazarr, Prowlarr, Jellyfin). The file system architecture strictly follows **[TRaSH Guides](https://trash-guides.info/)** standards to ensure instant, zero-cost hardlinks and atomic file moves.
-
----
+All torrent download traffic is routed strictly through a **Gluetun WireGuard VPN client container**, while maintaining seamless local communication between services (Radarr, Sonarr, Lidarr, Bazarr, Prowlarr, Jellyseerr, Jellyfin). The file system architecture strictly follows [**TRaSH Guides**](https://trash-guides.info/) standards to ensure instant, zero-cost hardlinks and atomic file moves.
 
 ## 🏗️ Architecture Overview
 
-```text
+```
                                   [ Internet / Tracker Network ]
                                                 ▲
                                                 │ (WireGuard Tunnel)
@@ -23,15 +21,13 @@ All torrent download traffic is routed strictly through a **Gluetun WireGuard VP
                         │
                         │ (Internal Docker Network: `arr_network`)
                         │
-  ┌─────────────────────┼─────────────────────┬─────────────────────┐
-  │                     │                     │                     │
-┌─┴──────────────┐   ┌──┴─────────────┐    ┌──┴─────────────┐    ┌──┴─────────────┐
-│    RADARR      │   │     SONARR     │    │   PROWLARR     │    │   JELLYFIN     │
-│ (Port 7878)    │   │  (Port 8989)   │    │ (Port 9696)    │    │ (Port 8096)    │
-└────────────────┘   └────────────────┘    └────────────────┘    └────────────────┘
+  ┌─────────────────────┼─────────────────────┬─────────────────────┬─────────────────────┐
+  │                     │                     │                     │                     │
+┌─┴──────────────┐   ┌──┴─────────────┐    ┌──┴─────────────┐    ┌──┴─────────────┐    ┌──┴─────────────┐
+│    RADARR      │   │     SONARR     │    │   PROWLARR     │    │   JELLYSEERR   │    │   JELLYFIN     │
+│ (Port 7878)    │   │  (Port 8989)   │    │ (Port 9696)    │    │  (Port 5055)   │    │ (Port 8096)    │
+└────────────────┘   └────────────────┘    └────────────────┘    └────────────────┘    └────────────────┘
 ```
-
----
 
 ## 📂 Storage Architecture (TRaSH Guides Standard)
 
@@ -67,6 +63,7 @@ volumes:
 > ⚠️ **CRITICAL TRaSH RULE:** Never map individual subfolders like `/data/media:/media` or `/data/torrents:/downloads`. Subfolder volume mounts break Linux hardlinking across mounts and force Docker to perform full disk copies.
 
 #### Service Category Paths:
+
 * **qBittorrent Categories:**
   * Movies category save path: `/data/torrents/movies`
   * TV category save path: `/data/torrents/tv`
@@ -74,27 +71,24 @@ volumes:
   * Radarr Root Folder: `/data/media/movies`
   * Sonarr Root Folder: `/data/media/tv`
 
----
-
 ## 🔒 Network Routing & VPN Isolation
 
-1. **qBittorrent Traffic Isolation:**  
+1. **qBittorrent Traffic Isolation:**
    `qbittorrent` uses `network_mode: "service:gluetun"`. This forces qBittorrent into Gluetun's network namespace. It has no independent network interface; all inbound/outbound P2P traffic **must** pass through Gluetun's WireGuard tunnel. If Gluetun loses its connection, qBittorrent's connection drops immediately (functioning as an automatic kill-switch).
 
-2. **Accessing qBittorrent's Web UI:**  
+2. **Accessing qBittorrent's Web UI:**
    Because qBittorrent inherits Gluetun's network stack, port `8080` is exposed to the local network via **Gluetun's `ports:` block**, not qBittorrent's.
 
-3. **Service-to-Service API Communication:**  
+3. **Service-to-Service API Communication:**
    When connecting download clients inside Prowlarr, Radarr, or Sonarr, you must target the host name **`gluetun`** on port **`8080`**.
-
----
 
 ## ⚠️ Critical Setup Instructions
 
 ### 1. Disable qBittorrent Host Header Validation
+
 By default, official and Hotio qBittorrent images enforce **Host Header Validation**. When applications like Prowlarr attempt to send API requests to qBittorrent via the Docker container name (`http://gluetun:8080`), qBittorrent drops the request with a `400 Bad Request` or connection refused error.
 
-To allow Prowlarr and the *Arr stack to communicate with qBittorrent, append the following setting to your qBittorrent configuration file at `/docker/appdata/qbittorrent/config/qBittorrent.conf`:
+To allow Prowlarr and the \*Arr stack to communicate with qBittorrent, append the following setting to your qBittorrent configuration file at `/docker/appdata/qbittorrent/config/qBittorrent.conf`:
 
 ```ini
 [Preferences]
@@ -102,12 +96,11 @@ WebUI\HostHeaderValidation=false
 ```
 
 **One-line command to apply on host:**
+
 ```bash
 echo 'WebUI\HostHeaderValidation=false' >> /docker/appdata/qbittorrent/config/qBittorrent.conf
 docker compose restart qbittorrent
 ```
-
----
 
 ### 2. Service Integration Reference
 
@@ -119,8 +112,16 @@ docker compose restart qbittorrent
 | **Radarr / Sonarr** | **Port** | `8080` | |
 | **Prowlarr** | **Radarr Integration** | `http://radarr:7878` | Resolves over internal `arr_network` |
 | **Prowlarr** | **Sonarr Integration** | `http://sonarr:8989` | Resolves over internal `arr_network` |
+| **Jellyseerr** | **Jellyfin Server** | `http://jellyfin:8096` | Authenticates users against media library |
+| **Jellyseerr** | **Radarr Server** | `http://radarr:7878` | Sends movie request search payloads |
+| **Jellyseerr** | **Sonarr Server** | `http://sonarr:8989` | Sends TV request search payloads |
 
----
+## 🍿 Request Flow with Jellyseerr / Overseerr
+
+1. **Request:** Users request media via the Jellyseerr Web UI (`http://<HOST_IP>:5055`).
+2. **Approval & Trigger:** Approved requests trigger API commands sent directly to Radarr or Sonarr over `arr_network`.
+3. **Search & Fetch:** Radarr/Sonarr query Prowlarr for indexers and send selected torrents to `gluetun:8080` (qBittorrent).
+4. **Download & Import:** qBittorrent downloads files safely over WireGuard. Upon completion, Radarr/Sonarr hardlink the media to `/data/media/` where Jellyfin automatically discovers it.
 
 ## 🧪 Post-Deployment Verification
 
@@ -133,5 +134,6 @@ docker compose restart qbittorrent
    * Go to **Prowlarr** $\rightarrow$ **Settings** $\rightarrow$ **Download Clients** $\rightarrow$ **qBittorrent**.
    * Set **Host** to `gluetun`, **Port** to `8080`, enter credentials, and click **Test**.
 
-3. **Confirm TRaSH Hardlinks:**
-   * Trigger a download from Radarr or Sonarr. Once complete, check `/data/media/movies/`. The file should move instantly without delaying or duplicating disk usage.
+3. **Verify Jellyseerr Media Requests:**
+   * Open Jellyseerr at `http://<HOST_IP>:5055`.
+   * Connect to Jellyfin, Radarr, and Sonarr. Request a movie or TV show to confirm automated routing to qBittorrent.
